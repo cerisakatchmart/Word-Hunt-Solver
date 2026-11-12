@@ -1,5 +1,5 @@
 # Word-Hunt-Solver
-I love playing WordHunt!
+This project was mainly for me to just play around with Claude Code and learn more about coding with agents.
 
 ## Usage
 
