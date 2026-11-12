@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Word Hunt Solver</title>
+<style>
+  :root {
+    --bg: #f4f1ea;
+    --panel: #ffffff;
+    --ink: #1f1d1a;
+    --muted: #6f6a61;
+    --line: #e2ddd2;
+    --tile: #f7e3b5;
+    --tile-ink: #3a2a10;
+    --tile-edge: #d9bf86;
+    --accent: #2f7d4f;
+    --accent-ink: #ffffff;
+    --path: rgba(47, 125, 79, 0.85);
+    --start: #c2410c;
+    --sel: #e7f2ea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #171614;
+      --panel: #221f1c;
+      --ink: #f1ede4;
+      --muted: #a39d92;
+      --line: #36322c;
+      --tile: #e8cf95;
+      --tile-ink: #2a1e08;
+      --tile-edge: #b89a5c;
+      --accent: #4fb07a;
+      --accent-ink: #0d1a12;
+      --path: rgba(79, 176, 122, 0.9);
+      --start: #f97316;
+      --sel: #23392b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #171614; --panel: #221f1c; --ink: #f1ede4; --muted: #a39d92; --line: #36322c;
+    --tile: #e8cf95; --tile-ink: #2a1e08; --tile-edge: #b89a5c; --accent: #4fb07a;
+    --accent-ink: #0d1a12; --path: rgba(79, 176, 122, 0.9); --start: #f97316; --sel: #23392b;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  main {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 32px 16px 48px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  @media (max-width: 720px) {
+    main { grid-template-columns: 1fr; gap: 24px; padding-top: 20px; }
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .hint { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
+
+  .board-wrap { position: relative; width: max-content; margin: 0 auto; }
+  .board {
+    --size: clamp(58px, 18vw, 76px);
+    display: grid;
+    grid-template-columns: repeat(4, var(--size));
+    gap: 10px;
+  }
+  .tile {
+    position: relative;
+    width: var(--size);
+    height: var(--size);
+  }
+  .tile input {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 12px;
+    background: var(--tile);
+    color: var(--tile-ink);
+    box-shadow: inset 0 -4px 0 var(--tile-edge);
+    font-family: inherit;
+    font-weight: 700;
+    font-size: calc(var(--size) * 0.5);
+    line-height: 1;
+    padding: 0;
+    text-align: center;
+    text-transform: uppercase;
+    caret-color: transparent;
+    outline: none;
+    transition: transform 0.08s, opacity 0.15s;
+  }
+  .tile input:focus { box-shadow: inset 0 -4px 0 var(--tile-edge), 0 0 0 3px var(--accent); }
+  .board.tracing .tile input { opacity: 0.35; }
+  .board.tracing .tile.on input { opacity: 1; }
+  .step {
+    position: absolute;
+    top: 4px; left: 6px;
+    font-size: 12px; font-weight: 700;
+    color: var(--tile-ink);
+    pointer-events: none;
+  }
+  .tile.first .step { color: var(--start); }
+  svg.trace {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    overflow: visible;
+  }
+
+  .buttons { display: flex; gap: 10px; margin-top: 20px; justify-content: center; }
+  button {
+    font: inherit; font-weight: 600;
+    border-radius: 10px;
+    padding: 10px 18px;
+    cursor: pointer;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--ink);
+  }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button:disabled { opacity: 0.5; cursor: default; }
+
+  .results {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px;
+    min-height: 200px;
+  }
+  .summary { display: flex; gap: 24px; margin-bottom: 14px; flex-wrap: wrap; }
+  .stat .num { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat .label { font-size: 13px; color: var(--muted); }
+  .empty, .error { color: var(--muted); font-size: 15px; }
+  .error { color: var(--start); }
+  .group h2 {
+    font-size: 13px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.04em;
+    margin: 14px 0 6px;
+  }
+  .words { display: flex; flex-wrap: wrap; gap: 6px; }
+  .word {
+    padding: 5px 10px;
+    border-radius: 8px;
+    font-size: 14px; font-weight: 600;
+    letter-spacing: 0.03em;
+    border: 1px solid var(--line);
+    background: transparent;
+  }
+  .word.sel { background: var(--sel); border-color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <section>
+    <h1>Word Hunt Solver</h1>
+    <p class="hint">Type the board's letters left to right, top to bottom. You can also paste all 16 at once.</p>
+    <div class="board-wrap">
+      <div class="board" id="board"></div>
+      <svg class="trace" id="trace"></svg>
+    </div>
+    <div class="buttons">
+      <button class="primary" id="solve" disabled>Solve</button>
+      <button id="clear">Clear</button>
+    </div>
+  </section>
+
+  <section class="results" id="results" aria-live="polite">
+    <p class="empty">Fill in all 16 tiles to see every word on the board.</p>
+  </section>
+</main>
+
+<script>
+const N = 4;
+const boardEl = document.getElementById("board");
+const traceEl = document.getElementById("trace");
+const resultsEl = document.getElementById("results");
+const solveBtn = document.getElementById("solve");
+const clearBtn = document.getElementById("clear");
+
+const tiles = [];
+const inputs = [];
+let lastSolved = null;
+let selected = null;
+
+for (let i = 0; i < N * N; i++) {
+  const tile = document.createElement("div");
+  tile.className = "tile";
+  const input = document.createElement("input");
+  input.autocomplete = "off";
+  input.autocapitalize = "characters";
+  input.spellcheck = false;
+  input.setAttribute("aria-label", `Row ${Math.floor(i / N) + 1}, column ${i % N + 1}`);
+  input.addEventListener("input", () => onInput(i));
+  input.addEventListener("keydown", (e) => onKey(e, i));
+  input.addEventListener("paste", (e) => onPaste(e, i));
+  input.addEventListener("focus", () => input.select());
+  tile.appendChild(input);
+  boardEl.appendChild(tile);
+  tiles.push(tile);
+  inputs.push(input);
+}
+inputs[0].focus();
+
+function letters() { return inputs.map((el) => el.value.toLowerCase()); }
+function isFull() { return letters().every((c) => /^[a-z]$/.test(c)); }
+
+function boardChanged() {
+  clearTrace();
+  solveBtn.disabled = !isFull();
+  if (isFull() && letters().join("") !== lastSolved) solve();
+}
+
+// Spread letters across tiles starting at i; returns the next empty index.
+function fillFrom(i, text) {
+  let j = i;
+  for (const ch of text) {
+    if (j >= N * N) break;
+    inputs[j++].value = ch.toUpperCase();
+  }
+  return j;
+}
+
+function onInput(i) {
+  const v = inputs[i].value.replace(/[^a-z]/gi, "");
+  inputs[i].value = "";
+  const next = v ? fillFrom(i, v) : i;
+  if (v) inputs[Math.min(next, N * N - 1)].focus();
+  boardChanged();
+}
+
+function onKey(e, i) {
+  const move = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -N, ArrowDown: N }[e.key];
+  if (move !== undefined) {
+    const j = i + move;
+    if (j >= 0 && j < N * N) inputs[j].focus();
+    e.preventDefault();
+  } else if (e.key === "Backspace" && !inputs[i].value && i > 0) {
+    inputs[i - 1].value = "";
+    inputs[i - 1].focus();
+    boardChanged();
+    e.preventDefault();
+  } else if (e.key === "Enter" && isFull()) {
+    solve();
+  } else if (/^[a-z]$/i.test(e.key) && !e.metaKey && !e.ctrlKey) {
+    // Overwrite the tile even if it already has a letter.
+    inputs[i].value = "";
+  }
+}
+
+function onPaste(e, i) {
+  const text = (e.clipboardData.getData("text") || "").replace(/[^a-z]/gi, "");
+  if (!text) return;
+  e.preventDefault();
+  inputs[Math.min(fillFrom(i, text), N * N - 1)].focus();
+  boardChanged();
+}
+
+clearBtn.addEventListener("click", () => {
+  inputs.forEach((el) => (el.value = ""));
+  lastSolved = null;
+  clearTrace();
+  solveBtn.disabled = true;
+  resultsEl.innerHTML = '<p class="empty">Fill in all 16 tiles to see every word on the board.</p>';
+  inputs[0].focus();
+});
+solveBtn.addEventListener("click", solve);
+
+async function solve() {
+  const board = letters().join("");
+  lastSolved = board;
+  resultsEl.innerHTML = '<p class="empty">Solving…</p>';
+  try {
+    const res = await fetch(`/solve?board=${board}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Solve failed");
+    if (board !== letters().join("")) return; // board changed mid-request
+    renderResults(data);
+  } catch (err) {
+    resultsEl.innerHTML = "";
+    const p = document.createElement("p");
+    p.className = "error";
+    p.textContent = `${err.message}. Is server.py running?`;
+    resultsEl.appendChild(p);
+  }
+}
+
+function renderResults(data) {
+  resultsEl.innerHTML = "";
+  const summary = document.createElement("div");
+  summary.className = "summary";
+  summary.innerHTML = `
+    <div class="stat"><div class="num">${data.words.length}</div><div class="label">words</div></div>
+    <div class="stat"><div class="num">${data.total.toLocaleString()}</div><div class="label">possible points</div></div>`;
+  resultsEl.appendChild(summary);
+
+  if (!data.words.length) {
+    resultsEl.insertAdjacentHTML("beforeend", '<p class="empty">No words found.</p>');
+    return;
+  }
+
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.style.margin = "0";
+  hint.textContent = "Click a word to see how to swipe it.";
+  resultsEl.appendChild(hint);
+
+  const groups = new Map();
+  for (const w of data.words) {
+    const key = w.word.length;
+    if (!groups.has(key)) groups.set(key, { score: w.score, words: [] });
+    groups.get(key).words.push(w);
+  }
+  for (const [len, g] of groups) {
+    const section = document.createElement("div");
+    section.className = "group";
+    section.innerHTML = `<h2>${len} letters · ${g.score.toLocaleString()} pts each</h2>`;
+    const list = document.createElement("div");
+    list.className = "words";
+    for (const w of g.words) {
+      const b = document.createElement("button");
+      b.className = "word";
+      b.textContent = w.word.toUpperCase();
+      b.addEventListener("click", () => {
+        if (selected) selected.classList.remove("sel");
+        if (selected === b) { selected = null; clearTrace(); return; }
+        selected = b;
+        b.classList.add("sel");
+        showTrace(w.path);
+      });
+      list.appendChild(b);
+    }
+    section.appendChild(list);
+    resultsEl.appendChild(section);
+  }
+}
+
+function clearTrace() {
+  boardEl.classList.remove("tracing");
+  tiles.forEach((t) => {
+    t.classList.remove("on", "first");
+    t.querySelector(".step")?.remove();
+  });
+  traceEl.innerHTML = "";
+  if (selected) { selected.classList.remove("sel"); selected = null; }
+}
+
+let currentPath = null;
+
+function showTrace(path) {
+  currentPath = path;
+  boardEl.classList.remove("tracing");
+  tiles.forEach((t) => { t.classList.remove("on", "first"); t.querySelector(".step")?.remove(); });
+  boardEl.classList.add("tracing");
+
+  const origin = boardEl.getBoundingClientRect();
+  const centers = path.map((i) => {
+    const r = tiles[i].getBoundingClientRect();
+    return [r.left - origin.left + r.width / 2, r.top - origin.top + r.height / 2];
+  });
+
+  path.forEach((i, n) => {
+    const t = tiles[i];
+    t.classList.add("on");
+    if (n === 0) t.classList.add("first");
+    const s = document.createElement("span");
+    s.className = "step";
+    s.textContent = n + 1;
+    t.appendChild(s);
+  });
+
+  const ns = "http://www.w3.org/2000/svg";
+  traceEl.innerHTML = "";
+  const line = document.createElementNS(ns, "polyline");
+  line.setAttribute("points", centers.map((c) => c.join(",")).join(" "));
+  line.setAttribute("fill", "none");
+  line.setAttribute("stroke", "var(--path)");
+  line.setAttribute("stroke-width", "8");
+  line.setAttribute("stroke-linecap", "round");
+  line.setAttribute("stroke-linejoin", "round");
+  traceEl.appendChild(line);
+  const dot = document.createElementNS(ns, "circle");
+  dot.setAttribute("cx", centers[0][0]);
+  dot.setAttribute("cy", centers[0][1]);
+  dot.setAttribute("r", "9");
+  dot.setAttribute("fill", "var(--start)");
+  traceEl.appendChild(dot);
+}
+
+window.addEventListener("resize", () => {
+  if (selected && currentPath) showTrace(currentPath);
+});
+</script>
+</body>
+</html>
