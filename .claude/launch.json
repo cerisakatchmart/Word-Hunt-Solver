@@ -4,7 +4,7 @@
     {
       "name": "wordhunt",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["server.py", "--port", "8000"],
+      "runtimeArgs": ["-m", "http.server", "8000", "-d", "static"],
       "port": 8000
     }
   ]

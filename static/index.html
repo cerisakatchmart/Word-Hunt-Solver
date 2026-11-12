@@ -4,13 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Word Hunt Solver</title>
+<meta name="claude:viewport-fit-sides" content="cover">
 <style>
+  /* Layout: board on the left, word list on the right; stacks on phones. */
   :root {
-    --bg: #f4f1ea;
-    --panel: #ffffff;
-    --ink: #1f1d1a;
-    --muted: #6f6a61;
-    --line: #e2ddd2;
+    --bg: #e9efeb;
+    --panel: #fbfdfc;
+    --ink: #17201b;
+    --muted: #5d6a62;
+    --line: #d3ddd6;
     --tile: #f7e3b5;
     --tile-ink: #3a2a10;
     --tile-edge: #d9bf86;
@@ -22,11 +24,11 @@
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #171614;
-      --panel: #221f1c;
-      --ink: #f1ede4;
-      --muted: #a39d92;
-      --line: #36322c;
+      --bg: #131815;
+      --panel: #1c231f;
+      --ink: #ecf1ed;
+      --muted: #9aa69f;
+      --line: #2f3a33;
       --tile: #e8cf95;
       --tile-ink: #2a1e08;
       --tile-edge: #b89a5c;
@@ -35,12 +37,14 @@
       --path: rgba(79, 176, 122, 0.9);
       --start: #f97316;
       --sel: #23392b;
+      color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
-    --bg: #171614; --panel: #221f1c; --ink: #f1ede4; --muted: #a39d92; --line: #36322c;
+    --bg: #131815; --panel: #1c231f; --ink: #ecf1ed; --muted: #9aa69f; --line: #2f3a33;
     --tile: #e8cf95; --tile-ink: #2a1e08; --tile-edge: #b89a5c; --accent: #4fb07a;
     --accent-ink: #0d1a12; --path: rgba(79, 176, 122, 0.9); --start: #f97316; --sel: #23392b;
+    color-scheme: dark;
   }
 
   * { box-sizing: border-box; }
@@ -53,14 +57,16 @@
   main {
     max-width: 920px;
     margin: 0 auto;
-    padding: 32px 16px 48px;
+    padding-block: 32px 48px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
     display: grid;
     grid-template-columns: auto 1fr;
     gap: 32px;
     align-items: start;
   }
   @media (max-width: 720px) {
-    main { grid-template-columns: 1fr; gap: 24px; padding-top: 20px; }
+    main { grid-template-columns: 1fr; gap: 24px; padding-block-start: 20px; }
   }
   h1 { font-size: 22px; margin: 0 0 4px; }
   .hint { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
@@ -96,6 +102,7 @@
     outline: none;
     transition: transform 0.08s, opacity 0.15s;
   }
+  .tile input::selection { background: transparent; }
   .tile input:focus { box-shadow: inset 0 -4px 0 var(--tile-edge), 0 0 0 3px var(--accent); }
   .board.tracing .tile input { opacity: 0.35; }
   .board.tracing .tile.on input { opacity: 1; }
@@ -161,6 +168,7 @@
   <section>
     <h1>Word Hunt Solver</h1>
     <p class="hint">Type the board's letters left to right, top to bottom. You can also paste all 16 at once.</p>
+    <p class="hint" id="example-note">Showing an example board. Click Clear, or type over it.</p>
     <div class="board-wrap">
       <div class="board" id="board"></div>
       <svg class="trace" id="trace"></svg>
@@ -206,12 +214,13 @@ for (let i = 0; i < N * N; i++) {
   tiles.push(tile);
   inputs.push(input);
 }
-inputs[0].focus();
+const exampleNote = document.getElementById("example-note");
 
 function letters() { return inputs.map((el) => el.value.toLowerCase()); }
 function isFull() { return letters().every((c) => /^[a-z]$/.test(c)); }
 
 function boardChanged() {
+  exampleNote.hidden = true;
   clearTrace();
   solveBtn.disabled = !isFull();
   if (isFull() && letters().join("") !== lastSolved) solve();
@@ -272,21 +281,86 @@ clearBtn.addEventListener("click", () => {
 });
 solveBtn.addEventListener("click", solve);
 
+// ---------------------------------------------------------------- solver
+// Same algorithm as wordhunt.py: trie of dictionary words + DFS from every
+// tile over its 8 neighbours, pruning any path that isn't a word prefix.
+
+function score(word) {
+  const n = word.length;
+  if (n < 3) return 0;
+  if (n === 3) return 100;
+  if (n === 4) return 400;
+  if (n === 5) return 800;
+  return 1400 + (n - 6) * 400;
+}
+
+function buildTrie(words) {
+  const root = {};
+  for (const w of words) {
+    let node = root;
+    for (const ch of w) node = node[ch] || (node[ch] = {});
+    node.$ = w;
+  }
+  return root;
+}
+
+const ADJ = [];
+for (let r = 0; r < N; r++) {
+  for (let c = 0; c < N; c++) {
+    const cells = [];
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const nr = r + dr, nc = c + dc;
+        if ((dr || dc) && nr >= 0 && nr < N && nc >= 0 && nc < N) cells.push(nr * N + nc);
+      }
+    }
+    ADJ.push(cells);
+  }
+}
+
+function solveBoard(flat, trie) {
+  const found = new Map();
+  const visited = new Array(flat.length).fill(false);
+  const path = [];
+  function dfs(i, node) {
+    const child = node[flat[i]];
+    if (!child) return;
+    visited[i] = true;
+    path.push(i);
+    if (child.$ && !found.has(child.$)) found.set(child.$, path.slice());
+    for (const j of ADJ[i]) if (!visited[j]) dfs(j, child);
+    path.pop();
+    visited[i] = false;
+  }
+  for (let i = 0; i < flat.length; i++) dfs(i, trie);
+  const words = [...found.keys()].sort((a, b) => score(b) - score(a) || a.localeCompare(b));
+  return {
+    total: words.reduce((t, w) => t + score(w), 0),
+    words: words.map((w) => ({ word: w, score: score(w), path: found.get(w) })),
+  };
+}
+
+// Load the word list once; solving waits on it.
+const trieReady = fetch("words.txt")
+  .then((res) => {
+    if (!res.ok) throw new Error("Couldn't load the word list");
+    return res.text();
+  })
+  .then((text) => buildTrie(text.split("\n").filter((w) => w.length >= 3)));
+
 async function solve() {
   const board = letters().join("");
   lastSolved = board;
-  resultsEl.innerHTML = '<p class="empty">Solving…</p>';
+  resultsEl.innerHTML = '<p class="empty">Loading dictionary…</p>';
   try {
-    const res = await fetch(`/solve?board=${board}`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Solve failed");
-    if (board !== letters().join("")) return; // board changed mid-request
-    renderResults(data);
+    const trie = await trieReady;
+    if (board !== letters().join("")) return; // board changed while loading
+    renderResults(solveBoard(letters(), trie));
   } catch (err) {
     resultsEl.innerHTML = "";
     const p = document.createElement("p");
     p.className = "error";
-    p.textContent = `${err.message}. Is server.py running?`;
+    p.textContent = `${err.message}. Reload the page to try again.`;
     resultsEl.appendChild(p);
   }
 }
@@ -396,6 +470,11 @@ function showTrace(path) {
 window.addEventListener("resize", () => {
   if (selected && currentPath) showTrace(currentPath);
 });
+
+// Open on a solved example board so the page shows what it does.
+fillFrom(0, "oatrihpshtnrenei");
+solveBtn.disabled = false;
+solve();
 </script>
 </body>
 </html>
